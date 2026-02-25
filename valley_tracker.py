@@ -53,7 +53,7 @@ with st.sidebar:
     
     # Auto-Route Map
     route_map = {
-        "Juliet (J) Valley": ["YINGKIONG", "TUTING", "PANGIN", "PASIGHAT", "BOLENG", "GELING", "MARIAN"],
+        "Juliet (J) Valley": ["YINGKIONG", "TUTING", "PANGIN", "PASIGHAT", "BOLENG", "GELING", "MECHUKA"],
         "Kilo (K) Valley": ["ROING", "ANINI", "DIBANG", "HUNLI", "DAMBUEN", "ETALIN", "MALINEY"],
         "Lima (L) Valley": ["TEZU", "HAYULIANG", "WALONG", "ALONG", "CHAGLAGAM", "KIBITHU", "HAWA CAMP"]
     }
@@ -160,4 +160,5 @@ for valley in ["Juliet (J) Valley", "Lima (L) Valley", "Kilo (K) Valley"]:
 
 if st.button("Clear All Data"):
     st.session_state.active_flights = []
+
     st.rerun()
