@@ -41,7 +41,7 @@ with st.sidebar:
     # --- SECTION: CLOCKS MOVED HERE ---
     st.markdown("### 🕒 MASTER CLOCKS")
     st.info(f"🌐 **UTC (ZULU):** {utc_now.strftime('%H:%M:%S Z')}")
-    st.success(f"📍 **LOCAL TIME:** {local_now.strftime('%H:%M:%S')}")
+    st.success(f"📍 **PASIGHAT (IST):** {local_now.strftime('%H:%M:%S')}")
     st.markdown("---")
 
     st.header("🛫 ADD TRAFFIC")
@@ -162,3 +162,4 @@ if st.button("Clear All Data"):
     st.session_state.active_flights = []
 
     st.rerun()
+
