@@ -1,14 +1,32 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import json
+import os
 
 # ==========================================
-# 1. TIMEZONE & HELPER FUNCTIONS
+# 1. DATABASE SETUP & TIMEZONE
 # ==========================================
+DATA_FILE = "atc_data.json"
+
+def load_data():
+    """Loads flight data from a permanent file."""
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return []
+    return []
+
+def save_data(data):
+    """Saves flight data to a permanent file."""
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
+
 def get_ist_now():
-    """Calculates India Standard Time safely without timezone clashes."""
+    """Calculates India Standard Time safely."""
     utc_now = datetime.datetime.now(datetime.timezone.utc)
-    # Remove the timezone tag, then add 5.5 hours for IST
     ist_naive = utc_now.replace(tzinfo=None) + datetime.timedelta(hours=5, minutes=30)
     return ist_naive, utc_now
 
@@ -31,7 +49,7 @@ def parse_time_string(time_str):
         minute = int(clean_str[2:])
         if 0 <= hour <= 23 and 0 <= minute <= 59:
             ist_now, _ = get_ist_now()
-            today = ist_now.date() # Ensure it uses India's current date
+            today = ist_now.date() 
             return datetime.datetime.combine(today, datetime.time(hour, minute))
     return None
 
@@ -42,8 +60,8 @@ st.set_page_config(page_title="Pasighat ATC Board", layout="wide", initial_sideb
 
 local_now, utc_now = get_ist_now()
 
-if 'active_flights' not in st.session_state:
-    st.session_state.active_flights = []
+# LOAD ACTIVE FLIGHTS FROM THE FILE (Refresh Proof)
+active_flights = load_data()
 
 route_map = {
     "Juliet (J) Valley": ["YINGKIONG", "TUTING", "PANGIN", "PASIGHAT", "BOLENG", "GELING", "MARIAN"],
@@ -86,36 +104,38 @@ with st.sidebar:
         en_o = parse_time_string(en_str)
         ex_o = parse_time_string(exit_str)
         if callsign and en_o and ex_o:
-            st.session_state.active_flights.append({
+            new_flight = {
                 "TYPE": ac_type.upper(), "CALLSIGN": callsign.upper(),
                 "FROM": from_loc.upper(), "TO": to_loc.upper(),
                 "LEVEL": level.upper(), "VALLEY NAME": target_v,
                 "IFF": iff_code, "VALLEY ENTRY": en_o.strftime("%H:%M"),
-                "VALLEY EXIT": ex_o.strftime("%H:%M"),
-                "EntryTimeObj": en_o, "ExitTimeObj": ex_o
-            })
+                "VALLEY EXIT": ex_o.strftime("%H:%M")
+            }
+            active_flights.append(new_flight)
+            save_data(active_flights) # SAVE TO FILE
             log_event(f"ADDED: {callsign.upper()}")
             st.rerun()
 
     # --- MANAGEMENT SUITE ---
-    if st.session_state.active_flights:
+    if active_flights:
         st.markdown("---")
         st.header("🔧 MANAGEMENT")
-        active_cs = [f["CALLSIGN"] for f in st.session_state.active_flights]
+        active_cs = [f["CALLSIGN"] for f in active_flights]
         sel_ac = st.selectbox("Select A/C to Update", active_cs)
         
         new_rev_exit = st.text_input("New Revised Exit HHMM")
         if st.button("Update Exit Time", use_container_width=True):
             new_ex_o = parse_time_string(new_rev_exit)
             if new_ex_o:
-                for f in st.session_state.active_flights:
+                for f in active_flights:
                     if f["CALLSIGN"] == sel_ac:
-                        f["ExitTimeObj"] = new_ex_o
                         f["VALLEY EXIT"] = new_ex_o.strftime("%H:%M")
-                        st.rerun()
+                save_data(active_flights) # SAVE TO FILE
+                st.rerun()
         
         if st.button("🚨 REMOVE AIRCRAFT", use_container_width=True):
-            st.session_state.active_flights = [f for f in st.session_state.active_flights if f["CALLSIGN"] != sel_ac]
+            active_flights = [f for f in active_flights if f["CALLSIGN"] != sel_ac]
+            save_data(active_flights) # SAVE TO FILE
             st.rerun()
 
 # ==========================================
@@ -133,20 +153,26 @@ cols_seq = ["TYPE", "CALLSIGN", "FROM", "TO", "LEVEL", "VALLEY NAME", "IFF", "VA
 
 for valley in ["Juliet (J) Valley", "Lima (L) Valley", "Kilo (K) Valley"]:
     st.subheader(f"📍 {valley}")
-    v_flights = [f for f in st.session_state.active_flights if f["VALLEY NAME"] == valley]
+    v_flights = [f for f in active_flights if f["VALLEY NAME"] == valley]
     
     if v_flights:
-        v_flights = sorted(v_flights, key=lambda x: x["ExitTimeObj"])
+        # Sort dynamically by calculating time objects on the fly
+        v_flights = sorted(v_flights, key=lambda x: parse_time_string(x["VALLEY EXIT"]) or local_now)
         display_data = []
         
         for idx, f in enumerate(v_flights):
-            # Safe Countdown Calculation (Both times are now Naive)
-            mins_rem = int((f["ExitTimeObj"] - local_now).total_seconds() / 60)
+            entry_obj = parse_time_string(f["VALLEY ENTRY"])
+            exit_obj = parse_time_string(f["VALLEY EXIT"])
+            
+            # Safe Countdown
+            mins_rem = int((exit_obj - local_now).total_seconds() / 60) if exit_obj else 0
             status = "🔴 OVERDUE" if mins_rem <= 0 else "🟢 ENROUTE"
             
+            # Conflict Alert
             for o_f in v_flights[idx+1:]:
-                if f["LEVEL"] == o_f["LEVEL"]:
-                    t_diff = abs((f["EntryTimeObj"] - o_f["EntryTimeObj"]).total_seconds() / 60)
+                other_entry_obj = parse_time_string(o_f["VALLEY ENTRY"])
+                if f["LEVEL"] == o_f["LEVEL"] and entry_obj and other_entry_obj:
+                    t_diff = abs((entry_obj - other_entry_obj).total_seconds() / 60)
                     if t_diff <= 10:
                         st.error(f"🚨 CONFLICT: {f['CALLSIGN']} & {o_f['CALLSIGN']} at {f['LEVEL']} (within 10m)")
 
@@ -164,5 +190,5 @@ for valley in ["Juliet (J) Valley", "Lima (L) Valley", "Kilo (K) Valley"]:
     st.markdown("<br>", unsafe_allow_html=True)
 
 if st.button("Clear All Data (Shift End)"):
-    st.session_state.active_flights = []
+    save_data([]) # EMPTIES THE FILE
     st.rerun()
