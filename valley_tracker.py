@@ -34,13 +34,17 @@ st.set_page_config(page_title="Pasighat ATC Board", layout="wide", initial_sideb
 # ==========================================
 # 3. SIDEBAR (CLOCKS + ADD + MANAGE)
 # ==========================================
-local_now = datetime.datetime.now()
+# Force the cloud server to calculate IST (UTC + 5.5 hours)
 utc_now = datetime.datetime.now(datetime.timezone.utc)
+ist_offset = datetime.timedelta(hours=5, minutes=30)
+local_now = utc_now + ist_offset
 
 with st.sidebar:
     # --- SECTION: CLOCKS MOVED HERE ---
     st.markdown("### 🕒 MASTER CLOCKS")
+    # Display Zulu
     st.info(f"🌐 **UTC (ZULU):** {utc_now.strftime('%H:%M:%S Z')}")
+    # Display Pasighat/India Time
     st.success(f"📍 **PASIGHAT (IST):** {local_now.strftime('%H:%M:%S')}")
     st.markdown("---")
 
@@ -162,4 +166,5 @@ if st.button("Clear All Data"):
     st.session_state.active_flights = []
 
     st.rerun()
+
 
