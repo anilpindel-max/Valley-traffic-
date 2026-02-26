@@ -3,12 +3,20 @@ import pandas as pd
 import datetime
 
 # ==========================================
-# 1. HELPER FUNCTIONS & LOGGING
+# 1. TIMEZONE & HELPER FUNCTIONS
 # ==========================================
+def get_ist_now():
+    """Calculates India Standard Time safely without timezone clashes."""
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+    # Remove the timezone tag, then add 5.5 hours for IST
+    ist_naive = utc_now.replace(tzinfo=None) + datetime.timedelta(hours=5, minutes=30)
+    return ist_naive, utc_now
+
 def log_event(message):
-    today_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    ist_now, _ = get_ist_now()
+    today_date = ist_now.strftime("%Y-%m-%d")
     filename = f"ATC_Log_{today_date}.txt"
-    current_time = datetime.datetime.now().strftime("%H:%M:%S")
+    current_time = ist_now.strftime("%H:%M:%S")
     try:
         with open(filename, "a") as file:
             file.write(f"[{current_time}] {message}\n")
@@ -22,29 +30,41 @@ def parse_time_string(time_str):
         hour = int(clean_str[:2])
         minute = int(clean_str[2:])
         if 0 <= hour <= 23 and 0 <= minute <= 59:
-            today = datetime.datetime.now().date()
+            ist_now, _ = get_ist_now()
+            today = ist_now.date() # Ensure it uses India's current date
             return datetime.datetime.combine(today, datetime.time(hour, minute))
     return None
 
 # ==========================================
-# 2. PAGE CONFIG
+# 2. PAGE CONFIG & INITIALIZATION
 # ==========================================
 st.set_page_config(page_title="Pasighat ATC Board", layout="wide", initial_sidebar_state="expanded")
+
+local_now, utc_now = get_ist_now()
+
+if 'active_flights' not in st.session_state:
+    st.session_state.active_flights = []
+
+route_map = {
+    "Juliet (J) Valley": ["YINGKIONG", "TUTING", "PANGIN", "PASIGHAT", "BOLENG", "GELING", "MARIAN"],
+    "Kilo (K) Valley": ["ROING", "ANINI", "DIBANG", "HUNLI", "DAMBUEN", "ETALIN", "MALINEY"],
+    "Lima (L) Valley": ["TEZU", "HAYULIANG", "WALONG", "ALONG", "CHAGLAGAM", "KIBITHU", "HAWA CAMP"]
+}
+valley_names = list(route_map.keys())
+
+def get_auto_valley(from_p, to_p):
+    combined = [from_p.upper(), to_p.upper()]
+    for i, (v_name, points) in enumerate(route_map.items()):
+        if any(p in points for p in combined):
+            return i
+    return 0
 
 # ==========================================
 # 3. SIDEBAR (CLOCKS + ADD + MANAGE)
 # ==========================================
-# Force the cloud server to calculate IST (UTC + 5.5 hours)
-utc_now = datetime.datetime.now(datetime.timezone.utc)
-ist_offset = datetime.timedelta(hours=5, minutes=30)
-local_now = utc_now + ist_offset
-
 with st.sidebar:
-    # --- SECTION: CLOCKS MOVED HERE ---
     st.markdown("### 🕒 MASTER CLOCKS")
-    # Display Zulu
     st.info(f"🌐 **UTC (ZULU):** {utc_now.strftime('%H:%M:%S Z')}")
-    # Display Pasighat/India Time
     st.success(f"📍 **PASIGHAT (IST):** {local_now.strftime('%H:%M:%S')}")
     st.markdown("---")
 
@@ -55,21 +75,7 @@ with st.sidebar:
     to_loc = st.text_input("TO")
     level = st.text_input("LEVEL")
     
-    # Auto-Route Map
-    route_map = {
-        "Juliet (J) Valley": ["YINGKIONG", "TUTING", "PANGIN", "PASIGHAT", "BOLENG", "GELING", "MECHUKA"],
-        "Kilo (K) Valley": ["ROING", "ANINI", "DIBANG", "HUNLI", "DAMBUEN", "ETALIN", "MALINEY"],
-        "Lima (L) Valley": ["TEZU", "HAYULIANG", "WALONG", "ALONG", "CHAGLAGAM", "KIBITHU", "HAWA CAMP"]
-    }
-    
-    auto_idx = 0
-    combined = [from_loc.upper(), to_loc.upper()]
-    for i, (v_name, points) in enumerate(route_map.items()):
-        if any(p in points for p in combined):
-            auto_idx = i
-            break
-            
-    valley_names = list(route_map.keys())
+    auto_idx = get_auto_valley(from_loc, to_loc)
     target_v = st.selectbox("VALLEY NAME", valley_names, index=auto_idx)
     
     iff_code = st.text_input("IFF / SQUAWK")
@@ -80,7 +86,6 @@ with st.sidebar:
         en_o = parse_time_string(en_str)
         ex_o = parse_time_string(exit_str)
         if callsign and en_o and ex_o:
-            if 'active_flights' not in st.session_state: st.session_state.active_flights = []
             st.session_state.active_flights.append({
                 "TYPE": ac_type.upper(), "CALLSIGN": callsign.upper(),
                 "FROM": from_loc.upper(), "TO": to_loc.upper(),
@@ -93,7 +98,7 @@ with st.sidebar:
             st.rerun()
 
     # --- MANAGEMENT SUITE ---
-    if 'active_flights' in st.session_state and st.session_state.active_flights:
+    if st.session_state.active_flights:
         st.markdown("---")
         st.header("🔧 MANAGEMENT")
         active_cs = [f["CALLSIGN"] for f in st.session_state.active_flights]
@@ -119,9 +124,6 @@ with st.sidebar:
 st.title("📡 PASIGHAT ATC: VALLEY TRAFFIC PROGRESS BOARD")
 st.markdown("---")
 
-if 'active_flights' not in st.session_state:
-    st.session_state.active_flights = []
-
 def style_overdue(row):
     if row['Status'] == '🔴 OVERDUE':
         return ['background-color: #8b0000; color: white; font-weight: bold'] * len(row)
@@ -134,15 +136,14 @@ for valley in ["Juliet (J) Valley", "Lima (L) Valley", "Kilo (K) Valley"]:
     v_flights = [f for f in st.session_state.active_flights if f["VALLEY NAME"] == valley]
     
     if v_flights:
-        # Sort so those exiting soonest are at the top
         v_flights = sorted(v_flights, key=lambda x: x["ExitTimeObj"])
         display_data = []
         
         for idx, f in enumerate(v_flights):
+            # Safe Countdown Calculation (Both times are now Naive)
             mins_rem = int((f["ExitTimeObj"] - local_now).total_seconds() / 60)
             status = "🔴 OVERDUE" if mins_rem <= 0 else "🟢 ENROUTE"
             
-            # Conflict Alert
             for o_f in v_flights[idx+1:]:
                 if f["LEVEL"] == o_f["LEVEL"]:
                     t_diff = abs((f["EntryTimeObj"] - o_f["EntryTimeObj"]).total_seconds() / 60)
@@ -162,9 +163,6 @@ for valley in ["Juliet (J) Valley", "Lima (L) Valley", "Kilo (K) Valley"]:
         st.info(f"No active traffic in {valley}.")
     st.markdown("<br>", unsafe_allow_html=True)
 
-if st.button("Clear All Data"):
+if st.button("Clear All Data (Shift End)"):
     st.session_state.active_flights = []
-
     st.rerun()
-
-
